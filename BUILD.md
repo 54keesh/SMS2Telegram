@@ -64,6 +64,46 @@ Keep the keystore and its passwords out of the repo.
   non-existent classes. In release builds R8 then strips all app code as
   unreachable.
 
+## Building with Docker (no local Java/Gradle/SDK needed)
+
+A `Dockerfile` is included that bundles JDK 17, the Android SDK (platform 36,
+build-tools 36.0.0) and Gradle 8.13, so you don't install anything on your
+machine except Docker.
+
+```bash
+# one-time: build the image (~5-10 min, ~1-2 GB)
+docker build -t otp-relay-builder .
+
+# debug APK — secrets are passed as env vars, never baked into the image
+docker run --rm \
+  -v "$PWD":/src \
+  -v otp-gradle-cache:/opt/gradle-home \
+  -e OTP_RELAY_BOT_TOKEN="<bot-token>" \
+  -e OTP_RELAY_CHAT_ID="<chat-id>" \
+  otp-relay-builder assembleDebug --no-daemon
+# -> app/build/outputs/apk/debug/app-debug.apk
+```
+
+The named volume `otp-gradle-cache` persists downloaded dependencies between
+runs: only the first build takes ~5-8 minutes, later builds take ~1 minute.
+
+Release build (signed) — also mount your keystore and pass its passwords:
+
+```bash
+docker run --rm \
+  -v "$PWD":/src \
+  -v otp-gradle-cache:/opt/gradle-home \
+  -v /path/to/otp-relay.keystore:/keystore/otp-relay.keystore:ro \
+  -e OTP_RELAY_BOT_TOKEN="<bot-token>" \
+  -e OTP_RELAY_CHAT_ID="<chat-id>" \
+  -e OTPRELAY_KEYSTORE=/keystore/otp-relay.keystore \
+  -e OTPRELAY_STORE_PASS="<store-password>" \
+  -e OTPRELAY_KEY_ALIAS=otprelay \
+  -e OTPRELAY_KEY_PASS="<key-password>" \
+  otp-relay-builder assembleRelease --no-daemon
+# -> app/build/outputs/apk/release/app-release.apk
+```
+
 ## Distributing the APK
 
 - A release-signed APK is the right artifact to share (smaller, optimized).
