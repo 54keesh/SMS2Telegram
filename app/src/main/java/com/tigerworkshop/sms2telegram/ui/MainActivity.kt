@@ -18,14 +18,14 @@ import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.tigerworkshop.sms2telegram.R
+import com.kashif.otprelay.R
 import com.tigerworkshop.sms2telegram.data.PendingMessageOutbox
 import com.tigerworkshop.sms2telegram.data.SettingsRepository
 import com.tigerworkshop.sms2telegram.data.StatusUpdateBus
 import com.tigerworkshop.sms2telegram.data.TelegramChatInfo
 import com.tigerworkshop.sms2telegram.data.TelegramDeliveryWorker
 import com.tigerworkshop.sms2telegram.data.TelegramForwarder
-import com.tigerworkshop.sms2telegram.databinding.ActivityMainBinding
+import com.kashif.otprelay.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -115,51 +115,28 @@ class MainActivity : AppCompatActivity() {
         observeStatusUpdates()
         initWizardInitialStep()
 
-        binding.inputToken.doAfterTextChanged {
-            val hasToken = !it.isNullOrBlank()
-            binding.buttonGetChatId.isEnabled = hasToken
-            if (hasToken) {
-                binding.inputLayoutToken.error = null
+        binding.inputName.doAfterTextChanged {
+            if (!it.isNullOrBlank()) {
+                binding.inputLayoutName.error = null
             }
         }
-        binding.inputChatId.doAfterTextChanged {
+        binding.inputPhone.doAfterTextChanged {
             if (!it.isNullOrBlank()) {
-                binding.inputLayoutChatId.error = null
+                binding.inputLayoutPhone.error = null
             }
         }
     }
 
     private fun initWizardInitialStep() {
-        val settings = settingsRepository.loadSettings()
-        val hasSettings = settings != null
-        if (hasSettings) {
-            binding.inputToken.setText(settings!!.apiToken)
-            binding.inputChatId.setText(settings.chatId)
-        }
-        binding.buttonGetChatId.isEnabled = !binding.inputToken.text.isNullOrBlank()
-
-        val hasPermission = hasSmsPermission()
         val initialStep = when {
             settingsRepository.isFirstLaunch() -> WizardStep.STEP0_WELCOME
-            !hasSettings -> WizardStep.STEP1_CONFIG
-            !hasPermission -> WizardStep.STEP2_PERMISSION
+            !settingsRepository.hasDeviceInfo() -> WizardStep.STEP1_CONFIG
+            !hasSmsPermission() -> WizardStep.STEP2_PERMISSION
             else -> WizardStep.STEP3_SUMMARY
         }
         showStep(initialStep)
         if (initialStep != WizardStep.STEP0_WELCOME) {
             settingsRepository.setFirstLaunch(false)
-        }
-    }
-
-    private fun openHowToUsePage() {
-        val uri = "https://github.com/imTigger/SMS2Telegram/tree/main?tab=readme-ov-file#how-to-use".toUri()
-        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-            addCategory(Intent.CATEGORY_BROWSABLE)
-        }
-        try {
-            startActivity(intent)
-        } catch (_: Exception) {
-            Toast.makeText(this, "No browser installed", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -170,10 +147,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: android.view.MenuItem): Boolean {
         return when (item.itemId) {
-            R.id.action_how_to_use -> {
-                openHowToUsePage()
-                true
-            }
             R.id.action_reset_app -> {
                 showResetConfirmation()
                 true
@@ -208,18 +181,9 @@ class MainActivity : AppCompatActivity() {
             showStep(WizardStep.STEP1_CONFIG)
         }
 
-        // Step 1 button: validate & continue
+        // Step 1 button: save device info & continue
         binding.buttonValidateAndContinue.setOnClickListener {
             validateAndContinue()
-        }
-
-        binding.buttonGetChatId.setOnClickListener {
-            fetchChatIds()
-        }
-
-        // Small helper link: open How to Use page
-        binding.buttonLearnHowToObtain.setOnClickListener {
-            openHowToUsePage()
         }
 
         // Step 2: request permission
@@ -312,72 +276,44 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun validateAndContinue() {
-        val token = binding.inputToken.text?.toString()?.trim().orEmpty()
-        val chatId = binding.inputChatId.text?.toString()?.trim().orEmpty()
+        val name = binding.inputName.text?.toString()?.trim().orEmpty()
+        val phone = binding.inputPhone.text?.toString()?.trim().orEmpty()
 
         var hasError = false
 
-        if (token.isBlank()) {
-            binding.inputLayoutToken.error = getString(R.string.hint_api_token)
+        if (name.isBlank()) {
+            binding.inputLayoutName.error = getString(R.string.error_name_required)
             hasError = true
         } else {
-            binding.inputLayoutToken.error = null
+            binding.inputLayoutName.error = null
         }
 
-        if (chatId.isBlank()) {
-            binding.inputLayoutChatId.error = getString(R.string.error_chat_id_required)
+        if (phone.isBlank()) {
+            binding.inputLayoutPhone.error = getString(R.string.error_phone_required)
             hasError = true
         } else {
-            binding.inputLayoutChatId.error = null
+            binding.inputLayoutPhone.error = null
         }
 
         if (hasError) return
 
-        lifecycleScope.launch {
-            binding.buttonValidateAndContinue.isEnabled = false
-            try {
-                val result = telegramForwarder.sendMessage(
-                    token = token,
-                    chatId = chatId,
-                    message = getString(R.string.test_message_body)
-                )
+        // Zero-config build: Telegram credentials are baked in at build time.
+        // Just persist the device label and move on.
+        settingsRepository.saveDeviceInfo(name, phone)
+        settingsRepository.setFirstLaunch(false)
 
-                if (result.isSuccess) {
-                    // Save settings only when validation passes
-                    settingsRepository.saveSettings(token, chatId)
-                    val successText = timeFormatter.format(Date()) + " " + getString(R.string.test_message_success)
-                    settingsRepository.saveLastForwardStatus(successText)
-                    if (pendingMessageOutbox.pendingCount() > 0 && settingsRepository.isForwardingEnabled()) {
-                        TelegramDeliveryWorker.enqueue(this@MainActivity)
-                    }
+        Toast.makeText(
+            this,
+            getString(R.string.settings_saved),
+            Toast.LENGTH_SHORT
+        ).show()
 
-                    Toast.makeText(
-                        this@MainActivity,
-                        getString(R.string.step1_completed),
-                        Toast.LENGTH_SHORT
-                    ).show()
+        updateLastStatus()
 
-                    updateLastStatus()
-
-                    // Proceed to next step depending on permission state
-                    if (hasSmsPermission()) {
-                        showStep(WizardStep.STEP3_SUMMARY)
-                    } else {
-                        showStep(WizardStep.STEP2_PERMISSION)
-                    }
-                } else {
-                    val errorMessage = result.exceptionOrNull()?.localizedMessage ?: "unknown error"
-                    val errorText = timeFormatter.format(Date()) + " " + getString(
-                        R.string.test_message_error,
-                        errorMessage
-                    )
-                    settingsRepository.saveLastForwardStatus(errorText)
-                    Toast.makeText(this@MainActivity, errorMessage, Toast.LENGTH_LONG).show()
-                    updateLastStatus()
-                }
-            } finally {
-                binding.buttonValidateAndContinue.isEnabled = true
-            }
+        if (hasSmsPermission()) {
+            showStep(WizardStep.STEP3_SUMMARY)
+        } else {
+            showStep(WizardStep.STEP2_PERMISSION)
         }
     }
 
@@ -437,21 +373,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resetApp() {
-        // Clear stored settings and status
+        // Clear stored settings and status (Telegram credentials are baked in, not cleared)
         settingsRepository.setFirstLaunch(true)
-        settingsRepository.saveSettings("", "")
+        settingsRepository.clearDeviceInfo()
         settingsRepository.saveLastForwardStatus("")
         settingsRepository.setForwardingEnabled(false)
         settingsRepository.setShowSimNameEnabled(false)
         pendingMessageOutbox.clear()
         TelegramDeliveryWorker.cancel(this)
 
-        binding.inputToken.setText("")
-        binding.inputChatId.setText("")
+        binding.inputName.setText("")
+        binding.inputPhone.setText("")
         binding.switchForwarding.isChecked = false
         binding.switchShowSimName.isChecked = false
-        binding.buttonGetChatId.isEnabled = false
-        binding.buttonGetChatId.text = getString(R.string.button_get_chat_id)
         updateLastStatus()
         showStep(WizardStep.STEP0_WELCOME)
     }
@@ -596,63 +530,4 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun fetchChatIds() {
-        val token = binding.inputToken.text?.toString()?.trim().orEmpty()
-        if (token.isBlank()) {
-            binding.inputLayoutToken.error = getString(R.string.hint_api_token)
-            return
-        }
-
-        lifecycleScope.launch {
-            toggleChatFetchUi(true)
-            try {
-                val result = telegramForwarder.fetchUpdates(token)
-                if (result.isSuccess) {
-                    val chats = result.getOrNull().orEmpty()
-                    if (chats.isEmpty()) {
-                        Toast.makeText(this@MainActivity, getString(R.string.chat_id_empty), Toast.LENGTH_SHORT).show()
-                    } else {
-                        showChatSelectionDialog(chats)
-                    }
-                } else {
-                    val message = result.exceptionOrNull()?.localizedMessage ?: "unknown error"
-                    Toast.makeText(this@MainActivity, getString(R.string.chat_id_fetch_error, message), Toast.LENGTH_LONG).show()
-                }
-            } finally {
-                toggleChatFetchUi(false)
-            }
-        }
-    }
-
-    private fun toggleChatFetchUi(loading: Boolean) {
-        binding.buttonGetChatId.isEnabled = !loading
-        binding.buttonGetChatId.text = if (loading) {
-            getString(R.string.button_get_chat_id_loading)
-        } else {
-            getString(R.string.button_get_chat_id)
-        }
-    }
-
-    private fun showChatSelectionDialog(chats: List<TelegramChatInfo>) {
-        val entries = chats.map { chat ->
-            val labelName = when {
-                !chat.title.isNullOrBlank() -> chat.title
-                !chat.firstName.isNullOrBlank() -> chat.firstName
-                else -> chat.id.toString()
-            }
-            val usernameSuffix = if (!chat.username.isNullOrBlank()) " (@${chat.username})" else ""
-            "$labelName$usernameSuffix: ID = ${chat.id}"
-        }.toTypedArray()
-
-        AlertDialog.Builder(this)
-            .setTitle(R.string.chat_id_selection_title)
-            .setItems(entries) { _, which ->
-                val selected = chats[which]
-                binding.inputChatId.setText(selected.id.toString())
-                binding.inputLayoutChatId.error = null
-                Toast.makeText(this, getString(R.string.chat_id_selected), Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
 }

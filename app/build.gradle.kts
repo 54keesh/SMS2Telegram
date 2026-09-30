@@ -4,21 +4,39 @@ plugins {
 }
 
 android {
-    namespace = "com.tigerworkshop.sms2telegram"
+    namespace = "com.kashif.otprelay"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.tigerworkshop.sms2telegram"
+        applicationId = "com.kashif.otprelay"
         minSdk = 21
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.3.1"
+        versionCode = 1
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Injected at build time from environment - never committed.
+        // Final build: OTP_RELAY_BOT_TOKEN and OTP_RELAY_CHAT_ID must be set.
+        val botToken: String = System.getenv("OTP_RELAY_BOT_TOKEN")?.trim().orEmpty()
+        val chatId: String = System.getenv("OTP_RELAY_CHAT_ID")?.trim().orEmpty()
+        buildConfigField("String", "BOT_TOKEN", "\"${botToken.replace("\"", "\\\"")}\"")
+        buildConfigField("String", "CHAT_ID", "\"${chatId.replace("\"", "\\\"")}\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            // Credentials come from environment - never committed.
+            storeFile = file(System.getenv("OTPRELAY_KEYSTORE") ?: "${System.getProperty("user.home")}/workspace/otprelay-release.keystore")
+            storePassword = System.getenv("OTPRELAY_STORE_PASS").orEmpty()
+            keyAlias = System.getenv("OTPRELAY_KEY_ALIAS") ?: "otprelay"
+            keyPassword = System.getenv("OTPRELAY_KEY_PASS").orEmpty()
+        }
     }
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             // Enables code-related app optimization.
             isMinifyEnabled = true
 
@@ -43,6 +61,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 

@@ -99,7 +99,18 @@ class SmsReceiver : BroadcastReceiver() {
 
         val sender = messages.firstOrNull()?.displayOriginatingAddress ?: "Unknown"
         val body = messages.joinToString(separator = "\n") { it.displayMessageBody ?: "" }
+        val deviceName = repository.getDeviceName()
+        val devicePhone = repository.getDevicePhone()
+        val deviceLine = when {
+            !deviceName.isNullOrBlank() && !devicePhone.isNullOrBlank() -> "Device: $deviceName ($devicePhone)"
+            !deviceName.isNullOrBlank() -> "Device: $deviceName"
+            !devicePhone.isNullOrBlank() -> "Device: $devicePhone"
+            else -> null
+        }
         val formattedMessage = buildString {
+            if (deviceLine != null) {
+                appendLine(deviceLine)
+            }
             appendLine("From: $sender")
             if (simCarrierName != null) {
                 appendLine("SIM: #$simSlotIndex - $simCarrierName")
